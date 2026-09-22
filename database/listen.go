@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func ListenNotification(
+func Listen(
 	ctx context.Context,
 	db *pgx.Conn,
 	channel string,

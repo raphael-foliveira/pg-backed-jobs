@@ -33,7 +33,7 @@ func main() {
 		handler := func(s string) {
 			log.Printf("Received notification: %s", s)
 		}
-		if err := database.ListenNotification(
+		if err := database.Listen(
 			ctx,
 			listenConn,
 			"chat_messages",
