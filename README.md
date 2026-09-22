@@ -1,34 +1,8 @@
-# PostgreSQL-Backed Job Queue
+# PostgreSQL-Backed Jobs with River
 
-A small PostgreSQL-backed job queue written in Go. This project was built by hand as a learning exercise to explore how durable task queues work with PostgreSQL locking, retries, backoff, and task leases.
+A small Go example that uses [River](https://riverqueue.com/) for durable PostgreSQL-backed jobs. It creates a user in one job, then enqueues a welcome-email job. The example workers only log their work; they do not persist users or send real email. Email delivery randomly fails to demonstrate retries.
 
-The queue stores jobs in PostgreSQL and uses `FOR UPDATE SKIP LOCKED` to allow workers to claim pending jobs without claiming the same job concurrently.
-
-## Current features
-
-- PostgreSQL-backed task storage
-- Task handlers registered by task type
-- Atomic task claiming with `FOR UPDATE SKIP LOCKED`
-- FIFO-style ordering by creation time
-- Delayed retries through `available_at`
-- Configurable maximum retries
-- Failed and dead task states
-- Task leases through `lease_until`
-- Periodic recovery of expired leases
-- A small user-creation and welcome-email example
-
-## Task lifecycle
-
-Tasks are inserted as `pending` and become immediately available by default. A worker claims an eligible task and changes it to `in progress` while assigning a lease.
-
-Depending on the handler result, the task is then:
-
-- marked `completed` on success;
-- returned to `pending` with a future `available_at` on a retryable failure;
-- marked `failed` after the retry limit is reached; or
-- marked `dead` when no handler exists for its type.
-
-Expired leases are periodically returned to the pending queue so abandoned tasks can be attempted again.
+River handles job storage, concurrent claiming, retries, and recovery of jobs interrupted by worker shutdowns. Jobs in this example get up to four total attempts and use River's default retry schedule.
 
 ## Running the example
 
@@ -44,17 +18,14 @@ Run the example application:
 go run .
 ```
 
-The application creates the `tasks` table if it does not exist, registers the example handlers, and enqueues sample user-creation tasks. The example handlers log their work rather than persisting users or sending real email.
+The application applies River's PostgreSQL migrations, registers the two workers, and inserts 150 user-creation jobs. It keeps working until interrupted with Ctrl+C or SIGTERM.
 
-The default development database configuration is:
+The default development database URL is `postgres://postgres:postgres@localhost:5432/postgres`. Set `DATABASE_URL` to override it.
 
-```text
-postgres://postgres:postgres@localhost:5432/postgres
-```
+The old custom queue's `tasks` table is not used by River. Existing rows in that table are not automatically transferred to River's `river_job` table; migrate them separately before retiring the old queue if they contain work that must be completed.
 
 ## Project structure
 
-- `tasks/` contains the queue, PostgreSQL access, task claiming, retries, and lease recovery.
-- `users/` contains the example task types, payloads, enqueuer, and handlers.
-- `main.go` wires the example application together and initializes the database table.
+- `main.go` configures the River client, applies migrations, and starts the example.
+- `users/` defines River job arguments, insertion methods, and workers.
 - `docker-compose.yml` provides a local PostgreSQL instance.
