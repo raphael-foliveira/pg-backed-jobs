@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 	"uuid"
 
@@ -36,6 +37,9 @@ func (h *TaskHandler) HandleSendUserEmailTask(ctx context.Context, task *tasks.T
 	var req EmailTaskPayload
 	if err := json.Unmarshal(task.Payload, &req); err != nil {
 		return fmt.Errorf("failed to unmarshal task payload: %w", err)
+	}
+	if rand.Intn(10) < 5 {
+		return fmt.Errorf("failed to send an email to the user: email not found")
 	}
 	log.Printf("sent email to user: %+v\n", req)
 	return nil

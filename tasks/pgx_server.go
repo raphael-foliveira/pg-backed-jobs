@@ -93,11 +93,11 @@ func (s *PGXServer) SetNowFunc(nowFunc func() time.Time) *PGXServer {
 }
 
 func (s *PGXServer) retrieveAndHandle(ctx context.Context) error {
-	task, err := s.retrieveTask(ctx)
+	tasks, err := s.retrieveTask(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve task: %w", err)
 	}
-	if task == nil {
+	if len(tasks) == 0 {
 		log.Println("no pending tasks found, sleeping...")
 		timer := time.NewTimer(1 * time.Second)
 		defer timer.Stop()
@@ -115,26 +115,42 @@ func (s *PGXServer) retrieveAndHandle(ctx context.Context) error {
 		return fmt.Errorf("handler registry is not initialized")
 	}
 
-	if handler, ok := s.handlerRegistry[task.Type]; ok {
-		if err := handler(ctx, task); err != nil {
-			if task.Retries >= s.maxRetries {
-				if errFailed := s.markTaskFailed(ctx, task.ID); errFailed != nil {
-					return fmt.Errorf("failed to mark task as failed: %w", errFailed)
-				}
-				return nil
-			}
-			if errReset := s.setTaskToPending(ctx, task.ID, task.Retries+1); errReset != nil {
-				return fmt.Errorf("failed to reset task status: %w", errReset)
-			}
-			return nil
+	for _, task := range tasks {
+		if err := s.handleTask(ctx, &task); err != nil {
+			return err
 		}
-		if errCompleted := s.markTaskAsCompleted(ctx, task.ID); errCompleted != nil {
-			return fmt.Errorf("failed to mark task as completed: %w", errCompleted)
+	}
+	return nil
+}
+
+func (s *PGXServer) handleTask(ctx context.Context, task *Task) error {
+	handler, ok := s.handlerRegistry[task.Type]
+	if !ok {
+		if errDead := s.markTaskAsDead(ctx, task.ID); errDead != nil {
+			return fmt.Errorf("failed to mark task as dead: %w", errDead)
 		}
 		return nil
 	}
-	if errDead := s.markTaskAsDead(ctx, task.ID); errDead != nil {
-		return fmt.Errorf("failed to mark task as dead: %w", errDead)
+
+	if err := handler(ctx, task); err != nil {
+		return s.handleTaskFailure(ctx, task, err)
+	}
+
+	if errCompleted := s.markTaskAsCompleted(ctx, task.ID); errCompleted != nil {
+		return fmt.Errorf("failed to mark task as completed: %w", errCompleted)
+	}
+	return nil
+}
+
+func (s *PGXServer) handleTaskFailure(ctx context.Context, task *Task, err error) error {
+	if task.Retries >= s.maxRetries {
+		if errFailed := s.markTaskFailed(ctx, task.ID, err); errFailed != nil {
+			return fmt.Errorf("failed to mark task as failed: %w", errFailed)
+		}
+		return nil
+	}
+	if errReset := s.setTaskToPending(ctx, task.ID, task.Retries+1); errReset != nil {
+		return fmt.Errorf("failed to reset task status: %w", errReset)
 	}
 	return nil
 }
@@ -148,9 +164,9 @@ func (s *PGXServer) recoverAbandonedTasks(ctx context.Context) error {
 	return s.execQuery(ctx, query, s.now())
 }
 
-func (s *PGXServer) retrieveTask(ctx context.Context) (*Task, error) {
+func (s *PGXServer) retrieveTask(ctx context.Context) ([]Task, error) {
 	now := s.now()
-	query := `UPDATE tasks SET status = 'in progress', lease_until = $2 WHERE id = (
+	query := `UPDATE tasks SET status = 'in progress', lease_until = $2, started_at = $1 WHERE id = (
 			SELECT id FROM tasks WHERE status = 'pending' AND available_at <= $1
 			ORDER BY created_at ASC, id ASC
 			FOR UPDATE SKIP LOCKED LIMIT 1
@@ -160,11 +176,11 @@ func (s *PGXServer) retrieveTask(ctx context.Context) (*Task, error) {
 		return nil, fmt.Errorf("failed to retrieve task: %w", err)
 	}
 
-	task, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[Task])
+	tasks, err := pgx.CollectRows(rows, pgx.RowToStructByName[Task])
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	return task, nil
+	return tasks, nil
 }
 
 func (s *PGXServer) setTaskToPending(ctx context.Context, taskID int64, retries int) error {
@@ -173,15 +189,17 @@ func (s *PGXServer) setTaskToPending(ctx context.Context, taskID int64, retries 
 }
 
 func (s *PGXServer) markTaskAsCompleted(ctx context.Context, taskID int64) error {
-	return s.setTaskStatus(ctx, "completed", taskID)
+	query := `UPDATE tasks SET status = $1, finished_at = $3 WHERE id = $2`
+	return s.execQuery(ctx, query, "completed", taskID, s.now())
 }
 
 func (s *PGXServer) markTaskAsDead(ctx context.Context, taskID int64) error {
 	return s.setTaskStatus(ctx, "dead", taskID)
 }
 
-func (s *PGXServer) markTaskFailed(ctx context.Context, taskID int64) error {
-	return s.setTaskStatus(ctx, "failed", taskID)
+func (s *PGXServer) markTaskFailed(ctx context.Context, taskID int64, err error) error {
+	query := `UPDATE tasks SET status = $1, finished_at = $3, error = $4 WHERE id = $2`
+	return s.execQuery(ctx, query, "failed", taskID, s.now(), err.Error())
 }
 
 func (s *PGXServer) setTaskStatus(ctx context.Context, status string, taskID int64) error {

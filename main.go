@@ -5,17 +5,44 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/raphael-foliveira/pg-backed-jobs/database"
 	"github.com/raphael-foliveira/pg-backed-jobs/tasks"
 	"github.com/raphael-foliveira/pg-backed-jobs/users"
 )
 
 func main() {
 	ctx := context.Background()
-	db, err := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/postgres")
+	dbConfig, err := database.LoadConfig()
 	if err != nil {
-		log.Fatalf("failed to start database connection %v", err)
+		log.Fatalf("failed to load database config: %v", err)
 	}
+
+	db, err := pgxpool.New(ctx, dbConfig.URL)
+	if err != nil {
+		log.Fatalf("failed to start database connection %v:", err)
+	}
+
+	listenConn, err := pgx.Connect(ctx, dbConfig.URL)
+	if err != nil {
+		log.Fatalf("failed to start database connection %v:", err)
+	}
+
+	go func() {
+		handler := func(s string) {
+			log.Printf("Received notification: %s", s)
+		}
+		if err := database.ListenNotification(
+			ctx,
+			listenConn,
+			"chat_messages",
+			handler,
+		); err != nil {
+			log.Println("failed to listen for notifications:", err)
+			_ = listenConn.Close(ctx)
+		}
+	}()
 
 	if err := assertTasksTable(ctx, db); err != nil {
 		log.Fatalf("failed to assert tasks table %v", err)
@@ -50,7 +77,7 @@ func main() {
 		}
 	}()
 
-	for i := range 1500 {
+	for i := range 150 {
 		go func() {
 			_ = usersEnqueuer.EnqueueCreateUserTask(ctx, &users.CreateUserRequest{
 				Email: fmt.Sprintf("user-%d@email.com", i),
@@ -72,7 +99,10 @@ func assertTasksTable(ctx context.Context, db *pgxpool.Pool) error {
 		retries INT NOT NULL DEFAULT 0,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		lease_until TIMESTAMPTZ
+		lease_until TIMESTAMPTZ,
+		started_at TIMESTAMPTZ,
+		finished_at TIMESTAMPTZ,
+		error TEXT
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_tasks_status_available_at ON tasks (status, available_at);
