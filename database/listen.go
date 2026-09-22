@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -12,7 +13,7 @@ func ListenNotification(
 	channel string,
 	handler func(string),
 ) error {
-	_, err := db.Exec(ctx, "LISTEN chat_messages;")
+	_, err := db.Exec(ctx, fmt.Sprintf("LISTEN %s;", channel))
 	if err != nil {
 		return err
 	}
