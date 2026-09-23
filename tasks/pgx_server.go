@@ -172,8 +172,8 @@ func (s *PGXServer) retrieveTask(ctx context.Context) (*Task, error) {
 	now := s.now()
 	query := `UPDATE tasks SET status = $3, lease_until = $2, started_at = $1 WHERE id = (
 			SELECT id FROM tasks WHERE status = $4 AND available_at <= $1
-			ORDER BY created_at ASC, id ASC
-			FOR UPDATE SKIP LOCKED LIMIT 1
+			ORDER BY created_at ASC, id ASC LIMIT 1
+			FOR UPDATE SKIP LOCKED 
 		) RETURNING id, type, payload, retries;`
 	rows, err := s.db.Query(ctx, query, now, now.Add(s.leaseInterval), StatusInProgress, StatusPending)
 	if err != nil {
