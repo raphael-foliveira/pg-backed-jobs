@@ -13,7 +13,6 @@ import (
 	"github.com/raphael-foliveira/pg-backed-jobs/users"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivermigrate"
 )
 
 func main() {
@@ -35,13 +34,6 @@ func main() {
 	}
 
 	driver := riverpgxv5.New(db)
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		log.Fatalf("failed to create River migrator: %v", err)
-	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		log.Fatalf("failed to migrate River schema: %v", err)
-	}
 
 	workers := river.NewWorkers()
 	usersEnqueuer := &users.Enqueuer{}
