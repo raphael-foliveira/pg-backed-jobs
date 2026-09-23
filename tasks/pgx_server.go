@@ -14,6 +14,7 @@ import (
 
 type PGXServer struct {
 	db                  *pgxpool.Pool
+	listenConn          *pgx.Conn
 	regLock             sync.RWMutex
 	handlerRegistryOnce sync.Once
 	handlerRegistry     map[string]HandlerFunc
@@ -23,9 +24,10 @@ type PGXServer struct {
 	leaseInterval       time.Duration
 }
 
-func NewPGXServer(db *pgxpool.Pool) *PGXServer {
+func NewPGXServer(db *pgxpool.Pool, listenConn *pgx.Conn) *PGXServer {
 	return &PGXServer{
 		db:            db,
+		listenConn:    listenConn,
 		maxRetries:    3,
 		backoff:       1 * time.Minute,
 		now:           time.Now,
@@ -34,6 +36,7 @@ func NewPGXServer(db *pgxpool.Pool) *PGXServer {
 }
 
 func (s *PGXServer) Run(ctx context.Context) error {
+	_, _ = s.listenConn.Exec(ctx, "LISTEN task_notification")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -104,15 +107,12 @@ func (s *PGXServer) retrieveAndHandle(ctx context.Context) error {
 		return fmt.Errorf("failed to retrieve task: %w", err)
 	}
 	if task == nil {
-		log.Println("no pending tasks found, sleeping...")
-		timer := time.NewTimer(1 * time.Second)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-			return nil
+		log.Println("no pending tasks found. waiting for signal...")
+		_, err := s.listenConn.WaitForNotification(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to wait for notification: %w", err)
 		}
+		return nil
 	}
 	s.regLock.RLock()
 	defer s.regLock.RUnlock()

@@ -29,26 +29,11 @@ func main() {
 		log.Fatalf("failed to start database connection %v:", err)
 	}
 
-	go func() {
-		handler := func(s string) {
-			log.Printf("Received notification: %s", s)
-		}
-		if err := database.Listen(
-			ctx,
-			listenConn,
-			"chat_messages",
-			handler,
-		); err != nil {
-			log.Println("failed to listen for notifications:", err)
-			_ = listenConn.Close(ctx)
-		}
-	}()
-
 	if err := assertTasksTable(ctx, db); err != nil {
 		log.Fatalf("failed to assert tasks table %v", err)
 	}
 
-	tasksServer := tasks.NewPGXServer(db)
+	tasksServer := tasks.NewPGXServer(db, listenConn)
 
 	taskEnqueuer := tasks.NewPGXEnqueuer(db)
 
