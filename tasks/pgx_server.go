@@ -13,23 +13,23 @@ import (
 )
 
 type PGXServer struct {
-	db              *pgxpool.Pool
-	regLock         sync.RWMutex
-	handlerRegistry map[string]HandlerFunc
-	maxRetries      int
-	backoff         time.Duration
-	now             func() time.Time
-	leaseInterval   time.Duration
+	db                  *pgxpool.Pool
+	regLock             sync.RWMutex
+	handlerRegistryOnce sync.Once
+	handlerRegistry     map[string]HandlerFunc
+	maxRetries          int
+	backoff             time.Duration
+	now                 func() time.Time
+	leaseInterval       time.Duration
 }
 
 func NewPGXServer(db *pgxpool.Pool) *PGXServer {
 	return &PGXServer{
-		db:              db,
-		handlerRegistry: make(map[string]HandlerFunc),
-		maxRetries:      3,
-		backoff:         1 * time.Minute,
-		now:             time.Now,
-		leaseInterval:   10 * time.Minute,
+		db:            db,
+		maxRetries:    3,
+		backoff:       1 * time.Minute,
+		now:           time.Now,
+		leaseInterval: 10 * time.Minute,
 	}
 }
 
@@ -71,9 +71,9 @@ func (s *PGXServer) recoverAbandonedLoop(ctx context.Context) error {
 func (s *PGXServer) RegisterHandler(taskType string, handler HandlerFunc) {
 	s.regLock.Lock()
 	defer s.regLock.Unlock()
-	if s.handlerRegistry == nil {
+	s.handlerRegistryOnce.Do(func() {
 		s.handlerRegistry = make(map[string]HandlerFunc)
-	}
+	})
 	s.handlerRegistry[taskType] = handler
 	log.Println("registered handler for task type:", taskType)
 }
@@ -116,10 +116,6 @@ func (s *PGXServer) retrieveAndHandle(ctx context.Context) error {
 	}
 	s.regLock.RLock()
 	defer s.regLock.RUnlock()
-
-	if s.handlerRegistry == nil {
-		return fmt.Errorf("handler registry is not initialized")
-	}
 
 	if err := s.handleTask(ctx, task); err != nil {
 		return err
