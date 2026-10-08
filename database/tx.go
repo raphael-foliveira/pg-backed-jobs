@@ -19,10 +19,7 @@ func Tx(ctx context.Context, db *pgxpool.Pool, fn func(tx pgx.Tx) error) error {
 	defer func() {
 		rbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		err := tx.Rollback(rbCtx)
-		if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			log.Println("failed to rollback transaction:", err)
-		}
+		handleRollbackError(tx.Rollback(rbCtx))
 	}()
 
 	if err := fn(tx); err != nil {
@@ -34,4 +31,10 @@ func Tx(ctx context.Context, db *pgxpool.Pool, fn func(tx pgx.Tx) error) error {
 	}
 
 	return nil
+}
+
+func handleRollbackError(err error) {
+	if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		log.Println("failed to rollback transaction:", err)
+	}
 }
