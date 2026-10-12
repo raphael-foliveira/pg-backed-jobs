@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/raphael-foliveira/pg-backed-jobs/database"
 	"github.com/raphael-foliveira/pg-backed-jobs/tasks"
@@ -19,12 +18,12 @@ func main() {
 		log.Fatalf("failed to load database config: %v", err)
 	}
 
-	db, err := pgxpool.New(ctx, dbConfig.URL)
+	db, err := database.NewPool(ctx, dbConfig.URL)
 	if err != nil {
 		log.Fatalf("failed to start database connection %v:", err)
 	}
 
-	listenConn, err := pgx.Connect(ctx, dbConfig.URL)
+	listenConn, err := database.NewConnection(ctx, dbConfig.URL)
 	if err != nil {
 		log.Fatalf("failed to start database connection %v:", err)
 	}
